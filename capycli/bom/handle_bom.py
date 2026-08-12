@@ -24,6 +24,7 @@ import capycli.bom.findsources
 import capycli.bom.map_bom
 import capycli.bom.merge_bom
 import capycli.bom.show_bom
+import capycli.bom.upload_reports
 from capycli.common.print import print_red
 from capycli.main.result_codes import ResultCode
 
@@ -153,6 +154,12 @@ def run_bom_command(args: Any) -> None:
         """Check the SBOM for special components."""
         app16 = capycli.bom.component_check.ComponentCheck()
         app16.run(args)
+        return
+
+    if subcommand == "uploadreports":
+        """Upload scan reports to existing SW360 releases."""
+        app17 = capycli.bom.upload_reports.BomUploadReports()
+        app17.run(args)
         return
 
     print_red("Unknown sub-command: ")

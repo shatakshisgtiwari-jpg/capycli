@@ -51,6 +51,7 @@ class CommandlineSupport():
         Validate          validate an SBOM
         BomPackage        create a single archive that contains the SBOM and all source and binary files
         ComponentCheck    Check the SBOM for special components
+        UploadReports     upload scan reports to existing SW360 releases
 
     mapping
         ToHtml            create a HTML page showing the mapping result
@@ -452,6 +453,35 @@ class CommandlineSupport():
             help="copy the project with the given id and the update it",
         )
 
+        # used by BomUploadReports
+        self.parser.add_argument(
+            "--report-dir",
+            dest="report_dir",
+            help="directory with per-dependency scan reports",
+        )
+
+        # used by BomUploadReports
+        self.parser.add_argument(
+            "--filetype",
+            dest="filetype",
+            help="SW360 attachment type (default: COMPONENT_LICENSE_INFO_XML)",
+        )
+
+        # used by BomUploadReports
+        self.parser.add_argument(
+            "--comment",
+            dest="comment",
+            help="attachment comment (default: 'Scan report uploaded by CaPyCLI')",
+        )
+
+        # used by BomUploadReports
+        self.parser.add_argument(
+            "--force",
+            dest="force",
+            action="store_true",
+            help="upload even if same SHA-1 already exists",
+        )
+
     def read_config(self, filename: str = "", config_string: str = "") -> Dict[str, Any]:
         """
         Read configuration from string or config file.
@@ -511,6 +541,8 @@ class CommandlineSupport():
                     args_key = "package_source"
                 if args_key == "forceexit":
                     args_key = "force_exit"
+                if args_key == "report-dir":
+                    args_key = "report_dir"
 
                 if hasattr(args, args_key) and not args.__getattribute__(args_key):
                     args.__setattr__(args_key, cfg[key])
