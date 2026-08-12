@@ -34,6 +34,7 @@ class AppArguments():
         self.filterfile: str = ""
         self.help: bool = False
         self.id: str = ""
+        self.id_only: bool = False
         self.inputfile: str = ""
         self.matchmode: str = ""
         self.name: str = ""

@@ -437,6 +437,14 @@ class CommandlineSupport():
             help="project mainline state for releases in a newly created project",
         )
 
+        # used by FindProject
+        self.parser.add_argument(
+            "--id-only",
+            dest="id_only",
+            help="only output the project ID (for scripting)",
+            action="store_true",
+        )
+
         # used by CreateProject
         self.parser.add_argument(
             "--copy_from",

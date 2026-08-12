@@ -52,7 +52,8 @@ def run_project_command(args: Any) -> None:
 
     subcommand = args.command[1].lower()
     if subcommand == "find":
-        """Find a project on SW360 and display the project id."""
+        """Find a project on SW360 and display the project id.
+        Use --id-only to get just the project ID for scripting."""
         app = capycli.project.find_project.FindProject()
         app.run(args)
         return
