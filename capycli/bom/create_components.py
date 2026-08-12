@@ -354,9 +354,28 @@ class BomCreateComponents(capycli.common.script_base.ScriptBase):
                 cx_comp.name, cx_comp.version or "",
                 component_id, release_details=data)
         except SW360Error as swex:
-            errortext = "    Error creating component: " + self.get_error_message(swex)
+            # 400 Bad Request: component has empty version — skip gracefully
+            if swex.response is not None and swex.response.status_code == 400:
+                print_yellow(
+                    "    Skipped (400 Bad Request): " + self.get_error_message(swex))
+                return None
+            # 409 Conflict: release already exists — look it up and return existing
+            if swex.response is not None and swex.response.status_code == 409:
+                print_yellow("    Release already exists — looking up existing release")
+                try:
+                    component = self.client.get_component(component_id)
+                    if component:
+                        existing = self.search_for_release(component, cx_comp)
+                        if existing:
+                            print_text("    Using existing release: " + (cx_comp.version or ""))
+                            return existing
+                except Exception:
+                    pass
+                print_yellow("    Could not look up existing release — continuing")
+                return None
+            errortext = "    Error creating release: " + self.get_error_message(swex)
             print_red(errortext)
-            sys.exit(ResultCode.RESULT_ERROR_CREATING_COMPONENT)
+            sys.exit(ResultCode.RESULT_ERROR_CREATING_RELEASE)
         return release_new
 
     def update_release(self, cx_comp: Component, release_data: Dict[str, Any]) -> None:
@@ -590,6 +609,22 @@ class BomCreateComponents(capycli.common.script_base.ScriptBase):
             print_yellow("    Component created")
             return component_new
         except SW360Error as swex:
+            # 409 Conflict: component already exists — look it up and return existing
+            if swex.response is not None and swex.response.status_code == 409:
+                print_yellow("    Component already exists — looking up existing component")
+                try:
+                    components = self.client.get_component_by_name(cx_comp.name)
+                    if components and components.get("_embedded", {}).get("sw360:components"):
+                        for compref in components["_embedded"]["sw360:components"]:
+                            if compref["name"].lower() == cx_comp.name.lower():
+                                existing = self.client.get_component(self.get_sw360_id(compref))
+                                if existing:
+                                    print_text("    Using existing component: " + cx_comp.name)
+                                    return existing
+                except Exception:
+                    pass
+                print_yellow("    Could not look up existing component — continuing")
+                return None
             errortext = "    Error creating component: " + self.get_error_message(swex)
             print_red(errortext)
             sys.exit(ResultCode.RESULT_ERROR_CREATING_COMPONENT)
@@ -683,7 +718,9 @@ class BomCreateComponents(capycli.common.script_base.ScriptBase):
 
                 release = self.create_release(
                     cx_comp, self.get_sw360_id(component))
-                print_text("    Release created")
+                if release:
+                    print_text("    Release created")
+                # else: create_release returned None (e.g., 400 empty version) — skip
 
             if release:
                 self.update_release(cx_comp, release)
@@ -708,26 +745,63 @@ class BomCreateComponents(capycli.common.script_base.ScriptBase):
             sys.exit(ResultCode.RESULT_ERROR_ACCESSING_SW360)
 
         ok = True
+        skipped = 0
 
         for cx_comp in sbom.components:
             item_name = ScriptSupport.get_full_name_from_component(cx_comp)
             id = CycloneDxSupport.get_property_value(cx_comp, CycloneDxSupport.CDX_PROP_SW360ID)
             if id:
                 print_text("  " + item_name + " already exists")
-                rel = self.client.get_release(id)
+                try:
+                    rel = self.client.get_release(id)
+                except SW360Error as swex:
+                    if swex.response is not None and swex.response.status_code == 404:
+                        # Release no longer exists in SW360 — clear the ID and create fresh
+                        print_yellow("    Release " + id + " not found (404) — will recreate")
+                        CycloneDxSupport.remove_property(cx_comp, CycloneDxSupport.CDX_PROP_SW360ID)
+                        rel = None
+                    else:
+                        raise
                 if rel:
                     self.update_release(cx_comp, rel)
+                elif not CycloneDxSupport.get_property_value(cx_comp, CycloneDxSupport.CDX_PROP_SW360ID):
+                    # ID was cleared due to 404 — create as new
+                    print_text("  " + item_name + " (recreating)")
+                    try:
+                        self.create_component_and_release(cx_comp)
+                    except SW360Error as swex:
+                        if swex.response is not None and swex.response.status_code == 400:
+                            print_yellow("    Skipped (400 Bad Request): " + str(swex))
+                            skipped += 1
+                        else:
+                            raise
+                    new_id = CycloneDxSupport.get_property_value(cx_comp, CycloneDxSupport.CDX_PROP_SW360ID)
+                    if new_id:
+                        print("    Release id = " + new_id)
+                    elif not cx_comp.version:
+                        # Skipped due to empty version — not an error
+                        skipped += 1
+                    else:
+                        print_yellow(
+                            "    WARNING: Could not create release for " +
+                            item_name + " — will retry on next run")
             else:
                 print_text("  " + item_name)
                 self.create_component_and_release(cx_comp)
                 id = CycloneDxSupport.get_property_value(cx_comp, CycloneDxSupport.CDX_PROP_SW360ID)
                 if id:
                     print("    Release id = " + id)
+                elif not cx_comp.version:
+                    # Skipped due to empty version — not an error
+                    skipped += 1
                 else:
-                    ok = False
+                    print_yellow("    WARNING: Could not create release for " + item_name + " — will retry on next run")
 
             # clear map result
             CycloneDxSupport.remove_property(cx_comp, CycloneDxSupport.CDX_PROP_MAPRESULT)
+
+        if skipped > 0:
+            print_yellow(f"\n{skipped} component(s) skipped (empty version — cannot create release on SW360)")
 
         if not ok:
             print_red("An error occurred during component/release creation!")

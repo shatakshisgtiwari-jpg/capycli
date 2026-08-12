@@ -293,6 +293,43 @@ class CreateProject(capycli.common.script_base.ScriptBase):
             elif swex.response.status_code == requests.codes["forbidden"]:
                 print_red("  You are not authorized - do you have a valid write token?")
                 sys.exit(ResultCode.RESULT_AUTH_ERROR)
+            # 409 Conflict: project already exists — look it up and update instead
+            elif swex.response.status_code == 409:
+                print_yellow("  Project already exists — looking up and updating instead")
+                found_id = self.find_project(name, version)
+                if not found_id:
+                    # find_project() may fail if SW360 name search is unreliable
+                    # Try listing all projects as fallback
+                    print_yellow("  find_project returned empty — trying project listing fallback")
+                    try:
+                        all_projects = self.client.get_projects()
+                        has_projects = (
+                            all_projects and "_embedded" in all_projects
+                            and "sw360:projects" in all_projects["_embedded"])
+                        if has_projects:
+                            for proj in all_projects["_embedded"]["sw360:projects"]:
+                                proj_name = proj.get("name", "")
+                                proj_ver = proj.get("version", "")
+                                if proj_name.lower() == name.lower() and proj_ver.lower() == version.lower():
+                                    href = proj["_links"]["self"]["href"]
+                                    found_id = self.client.get_id_from_href(href)
+                                    print_text("  Found project via listing: " + found_id)
+                                    break
+                    except Exception as e:
+                        print_yellow("  Project listing fallback failed: " + repr(e))
+                if found_id:
+                    self.project_id = found_id
+                    print("  Found existing project: " + self.project_id)
+                    try:
+                        project = self.client.get_project(self.project_id)
+                        if project:
+                            self.update_project(self.project_id, project, sbom, project_info)
+                    except SW360Error as swex2:
+                        print_red("  Error updating existing project: " + repr(swex2))
+                        sys.exit(ResultCode.RESULT_ERROR_ACCESSING_SW360)
+                else:
+                    print_red("  Project already exists but could not be found for update")
+                    sys.exit(ResultCode.RESULT_ERROR_ACCESSING_SW360)
             elif swex.details:
                 print_red(
                     str(swex.details.get("status", "")) + " " +
