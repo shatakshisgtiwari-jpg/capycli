@@ -482,6 +482,14 @@ class CommandlineSupport():
             help="upload even if same SHA-1 already exists",
         )
 
+        # used by CheckPrerequisites
+        self.parser.add_argument(
+            "--check-reports",
+            dest="check_reports",
+            action="store_true",
+            help="check that scan report attachments exist for each release",
+        )
+
     def read_config(self, filename: str = "", config_string: str = "") -> Dict[str, Any]:
         """
         Read configuration from string or config file.

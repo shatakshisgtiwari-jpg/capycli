@@ -72,6 +72,7 @@ class AppArguments():
         self.copy_from = ""
         self.remote_check_list: str = ""
         self.local_checklist_list: str = ""
+        self.check_reports: bool = False
 
 
 class TestBasePytest:

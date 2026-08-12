@@ -50,6 +50,27 @@ class CheckPrerequisites(capycli.common.script_base.ScriptBase):
         ]
         return att
 
+    def get_scan_reports(self, release: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Return list of attachment infos for all scan report attachments.
+
+        Checks for attachment types:
+        - COMPONENT_LICENSE_INFO_XML  (FOSSology/SPDX scan results)
+        - CLEARING_REPORT             (Legal clearing report)
+        """
+        if "_embedded" not in release:
+            return []
+
+        if "sw360:attachments" not in release["_embedded"]:
+            return []
+
+        report_types = ("COMPONENT_LICENSE_INFO_XML", "CLEARING_REPORT")
+        att = [
+            entry
+            for entry in release["_embedded"]["sw360:attachments"]
+            if entry.get("attachmentType", "") in report_types
+        ]
+        return att
+
     def get_component_management_id(self, release: Dict[str, Any]) -> Dict[Any, Any]:
         """Retries the first component management id"""
         if "externalIds" not in release:
@@ -98,7 +119,8 @@ class CheckPrerequisites(capycli.common.script_base.ScriptBase):
 
         return False
 
-    def check_project_prerequisites(self, id: str, sbom: Optional[Bom]) -> bool:
+    def check_project_prerequisites(self, id: str, sbom: Optional[Bom],
+                                    check_reports: bool = False) -> bool:
         if not self.client:
             print_red("  No client!")
             sys.exit(ResultCode.RESULT_ERROR_ACCESSING_SW360)
@@ -196,8 +218,12 @@ class CheckPrerequisites(capycli.common.script_base.ScriptBase):
                     if len(bom_item) == 0:
                         print_red("      Item not in specified SBOM!")
                         count_errors += 1
+                    elif len(bom_item) == 1:
+                        bom_sha1 = CycloneDxSupport.get_source_file_hash(bom_item[0])
                     else:
-                        assert len(bom_item) == 1
+                        # Multiple SBOM items map to same release — use first match
+                        print_yellow(
+                            f"      Multiple SBOM items ({len(bom_item)}) map to same release — using first")
                         bom_sha1 = CycloneDxSupport.get_source_file_hash(bom_item[0])
 
                 source = self.get_source_code(release)
@@ -241,6 +267,22 @@ class CheckPrerequisites(capycli.common.script_base.ScriptBase):
                     count_warnings += 1
                 else:
                     print_green("      component management id: " + str(ids))
+
+                # Check scan report attachments if --check-reports is enabled
+                if check_reports:
+                    reports = self.get_scan_reports(release)
+                    if len(reports) == 0:
+                        print_yellow(
+                            "      No scan report attachment found!")
+                        count_warnings += 1
+                    else:
+                        for report_info in reports:
+                            report_type = report_info.get("attachmentType", "UNKNOWN")
+                            report_filename = report_info.get("filename", "unknown")
+                            print_green(
+                                "      Scan report: " +
+                                report_filename +
+                                " (" + report_type + ")")
 
                 print()
 
@@ -310,6 +352,7 @@ class CheckPrerequisites(capycli.common.script_base.ScriptBase):
             print("    -oa, --oauth2           this is an oauth2 token")
             print("    -url SW360_URL          use this URL for access to SW360")
             print("    --forceerror            force an error exit code in case of prerequisite errors")
+            print("    --check-reports         check that scan report attachments exist for each release")
             return
 
         if not self.login(token=args.sw360_token, url=args.sw360_url, oauth2=args.oauth2):
@@ -337,13 +380,16 @@ class CheckPrerequisites(capycli.common.script_base.ScriptBase):
         if args.version:
             version = args.version
 
+        check_reports = getattr(args, "check_reports", False)
+
         if args.id:
-            self.check_project_prerequisites(args.id, sbom)
+            if (self.check_project_prerequisites(args.id, sbom, check_reports) and args.force_error):
+                sys.exit(ResultCode.RESULT_PREREQUISITE_ERROR)
         elif (args.name and args.version):
             # find_project() is part of script_base.py
             pid = self.find_project(name, version)
             if pid:
-                if (self.check_project_prerequisites(pid, sbom) and args.force_error):
+                if (self.check_project_prerequisites(pid, sbom, check_reports) and args.force_error):
                     sys.exit(ResultCode.RESULT_PREREQUISITE_ERROR)
             else:
                 print_yellow("  No matching project found")
