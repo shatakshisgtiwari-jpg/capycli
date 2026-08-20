@@ -89,9 +89,16 @@ class BomCreateComponents(capycli.common.script_base.ScriptBase):
             sys.exit(ResultCode.RESULT_ERROR_ACCESSING_SW360)
 
         try:
+            self.debug_sw360_request(
+                "POST",
+                self.sw360_api_url(f"resource/api/releases/{release_id}/attachments"),
+                upload_file=sourcefile,
+                attachment_type=filetype,
+                attachment_comment=comment)
             self.client.upload_release_attachment(
                 release_id, sourcefile, upload_type=filetype, upload_comment=comment)
         except SW360Error as swex:
+            self.debug_sw360_error(swex)
             errortext = "    Error uploading source file: " + self.get_error_message(swex)
             print(Fore.LIGHTRED_EX + errortext + Style.RESET_ALL)
 
@@ -135,7 +142,15 @@ class BomCreateComponents(capycli.common.script_base.ScriptBase):
                 print_red("    No url specified!")
                 return
 
+            self.debug_http_request(
+                "CaPyCLI external", "GET", url,
+                purpose="download source or binary archive")
             response = requests.get(url, allow_redirects=True)
+            if response.url != url:
+                self.debug_http_request(
+                    "CaPyCLI external", "GET", response.url,
+                    purpose="final URL after redirects",
+                    initial_url=url, status=response.status_code)
             if (response.status_code == requests.codes["ok"]):
                 print_text("      Writing file", fullpath)
                 try:
@@ -284,6 +299,17 @@ class BomCreateComponents(capycli.common.script_base.ScriptBase):
 
         self.add_licenses(cx_comp, data)
 
+        self.debug_sw360_request(
+            "DATA",
+            "release payload before SW360 request",
+            payload=data,
+            component=cx_comp.name,
+            version=cx_comp.version or "",
+            source_url=data.get("sourceCodeDownloadurl", ""),
+            binary_url=data.get("binaryDownloadurl", ""),
+            website=str(website) if website else "",
+            repository=str(repo) if repo else "")
+
         return data
 
     def prepare_component_data(self, cx_comp: Component) -> Dict[str, Any]:
@@ -330,6 +356,13 @@ class BomCreateComponents(capycli.common.script_base.ScriptBase):
         data["additionalData"] = {}
         data["additionalData"]["createdWith"] = capycli.get_app_signature()
 
+        self.debug_sw360_request(
+            "DATA",
+            "component payload before SW360 request",
+            payload=data,
+            component=cx_comp.name,
+            homepage=data.get("homepage", ""))
+
         return data
 
     def create_release(self, cx_comp: Component, component_id: str) -> Optional[Dict[str, Any]]:
@@ -350,10 +383,21 @@ class BomCreateComponents(capycli.common.script_base.ScriptBase):
         # ensure that the release mainline state is properly set
         data["mainlineState"] = "OPEN"
         try:
+            release_payload = {**data, "name": cx_comp.name,
+                               "version": cx_comp.version or "",
+                               "componentId": component_id}
+            self.debug_sw360_request(
+                "POST",
+                self.sw360_api_url("resource/api/releases"),
+                payload=release_payload,
+                component=cx_comp.name,
+                version=cx_comp.version or "",
+                component_id=component_id)
             release_new = self.client.create_new_release(
                 cx_comp.name, cx_comp.version or "",
                 component_id, release_details=data)
         except SW360Error as swex:
+            self.debug_sw360_error(swex)
             # 400 Bad Request: component has empty version — skip gracefully
             if swex.response is not None and swex.response.status_code == 400:
                 print_yellow(
@@ -434,8 +478,19 @@ class BomCreateComponents(capycli.common.script_base.ScriptBase):
             # Some releases return 400 code while updating - to not break the script catch this exception
             try:
                 print_text("    Updating release data")
+                self.debug_sw360_request(
+                    "PATCH",
+                    self.sw360_api_url(f"resource/api/releases/{release_id}"),
+                    payload=update_data,
+                    component=cx_comp.name,
+                    version=cx_comp.version or "",
+                    release_id=release_id,
+                    existing_source_url=release_data.get("sourceCodeDownloadurl", ""),
+                    existing_binary_url=release_data.get("binaryDownloadurl", ""))
                 self.client.update_release(update_data, release_id)
             except Exception as e:
+                if isinstance(e, SW360Error):
+                    self.debug_sw360_error(e)
                 print_yellow(
                     "    WARNING: Updating SW360 releaseId: ", release_id,
                     "data: ", update_data, "failed! ", e)
@@ -467,6 +522,17 @@ class BomCreateComponents(capycli.common.script_base.ScriptBase):
             url = str(CycloneDxSupport.get_ext_ref_binary_url(cx_comp))
             filename = CycloneDxSupport.get_ext_ref_binary_file(cx_comp)
             filehash = str(CycloneDxSupport.get_binary_file_hash(cx_comp))
+
+        self.debug_sw360_request(
+            "DATA",
+            "attachment source selected",
+            component=cx_comp.name,
+            version=cx_comp.version or "",
+            release_id=release_id,
+            attachment_type=filetype,
+            source_url=url or "",
+            filename=filename or "",
+            file_hash=filehash or "")
 
         # Note that we retrieve the SHA1 has from the CycloneDX data.
         # But there is no guarantee that this *IS* really a SHA1 hash!
@@ -600,6 +666,16 @@ class BomCreateComponents(capycli.common.script_base.ScriptBase):
 
         data = self.prepare_component_data(cx_comp)
         try:
+            component_payload = {**data, "name": cx_comp.name,
+                                 "description": data["description"],
+                                 "homepage": data["homepage"],
+                                 "componentType": data["componentType"]}
+            self.debug_sw360_request(
+                "POST",
+                self.sw360_api_url("resource/api/components"),
+                payload=component_payload,
+                component=cx_comp.name,
+                homepage=data.get("homepage", ""))
             component_new = self.client.create_new_component(
                 cx_comp.name,
                 data["description"],
@@ -609,6 +685,7 @@ class BomCreateComponents(capycli.common.script_base.ScriptBase):
             print_yellow("    Component created")
             return component_new
         except SW360Error as swex:
+            self.debug_sw360_error(swex)
             # 409 Conflict: component already exists — look it up and return existing
             if swex.response is not None and swex.response.status_code == 409:
                 print_yellow("    Component already exists — looking up existing component")

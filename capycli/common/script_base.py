@@ -70,6 +70,46 @@ class ScriptBase:
 
         return result
 
+    def sw360_api_url(self, path: str) -> str:
+        """Build an SW360 REST API URL for debug output."""
+        base_url = self.sw360_url
+        if self.client:
+            base_url = self.client.url
+        return base_url.rstrip("/") + "/" + path.lstrip("/")
+
+    def debug_http_request(self, source: str, method: str, url: str,
+                           payload: Optional[Any] = None, **details: Any) -> None:
+        """Print an outbound HTTP request when debug output is enabled."""
+        import capycli
+
+        if not capycli.is_debug_logging_enabled():
+            return
+
+        print_text(f"[{source} DEBUG] {method.upper()} {url}")
+        for name, value in details.items():
+            print_text(f"  {name}: {value!r}")
+        if payload is not None:
+            print_text("  JSON payload: " + json.dumps(payload, sort_keys=True, default=str))
+
+    def debug_sw360_request(self, method: str, url: str,
+                            payload: Optional[Any] = None, **details: Any) -> None:
+        """Print an outbound SW360 request when debug output is enabled."""
+        self.debug_http_request("SW360", method, url, payload, **details)
+
+    def debug_sw360_error(self, swex: SW360Error) -> None:
+        """Print the response URL and body for a failed SW360 request."""
+        import capycli
+
+        if not capycli.is_debug_logging_enabled() or swex.response is None:
+            return
+
+        response = swex.response
+        response_url = getattr(response, "url", "")
+        response_body = response.text[:4000]
+        print_text(f"[SW360 DEBUG] response status: {response.status_code}")
+        print_text(f"[SW360 DEBUG] response URL: {response_url!r}")
+        print_text(f"[SW360 DEBUG] response body: {response_body!r}")
+
     def analyze_token(self, token: str) -> None:
         """Analyzes the user provided token.
         If we can decode it, then it is an OAuth2 token."""

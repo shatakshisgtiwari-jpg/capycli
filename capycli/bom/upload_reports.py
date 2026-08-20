@@ -79,11 +79,17 @@ class BomUploadReports(capycli.common.script_base.ScriptBase):
         if not self.client:
             return False
         try:
+            self.debug_sw360_request(
+                "GET",
+                self.sw360_api_url(f"resource/api/releases/{release_id}/attachments"),
+                release_id=release_id,
+                purpose="check existing attachments")
             attachments = self.client.get_attachment_infos_for_release(release_id)
             for att in attachments:
                 if att.get("filename", "") == filename and att.get("attachmentType", "") == upload_type:
                     return True
         except SW360Error as swex:
+            self.debug_sw360_error(swex)
             print_yellow(f"    Cannot check existing attachments: {self.get_error_message(swex)}")
         return False
 
@@ -203,6 +209,11 @@ class BomUploadReports(capycli.common.script_base.ScriptBase):
             should_upload = True
             if skip_existing and self.client:
                 try:
+                    self.debug_sw360_request(
+                        "GET",
+                        self.sw360_api_url(f"resource/api/releases/{release_id}/attachments"),
+                        release_id=release_id,
+                        purpose="check duplicate report hash")
                     attachments = self.client.get_attachment_infos_for_release(release_id)
                     for att in attachments:
                         if (att.get("attachmentType") == upload_type and
@@ -212,6 +223,7 @@ class BomUploadReports(capycli.common.script_base.ScriptBase):
                             should_upload = False
                             break
                 except SW360Error as swex:
+                    self.debug_sw360_error(swex)
                     print_yellow(f"    Cannot check existing attachments: {self.get_error_message(swex)}")
                     # Proceed to upload anyway
 
@@ -228,6 +240,14 @@ class BomUploadReports(capycli.common.script_base.ScriptBase):
                             "already exists on this release — skipping upload")
                         continue
                     try:
+                        self.debug_sw360_request(
+                            "POST",
+                            self.sw360_api_url(f"resource/api/releases/{release_id}/attachments"),
+                            release_id=release_id,
+                            upload_file=report_file,
+                            attachment_type=upload_type,
+                            attachment_comment=upload_comment,
+                            filename=os.path.basename(report_file))
                         self.client.upload_release_attachment(
                             release_id,
                             report_file,
@@ -236,6 +256,7 @@ class BomUploadReports(capycli.common.script_base.ScriptBase):
                         report["uploaded"] += 1
                         print_green(f"    Uploaded {os.path.basename(report_file)} as {upload_type}")
                     except SW360Error as swex:
+                        self.debug_sw360_error(swex)
                         report["failed"] += 1
                         print_red(f"    Upload failed: {self.get_error_message(swex)}")
                 else:
